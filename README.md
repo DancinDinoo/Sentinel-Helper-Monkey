@@ -1,22 +1,10 @@
-﻿# Sentinel Helper Extension
+# Sentinel Helper Extension
 
-Sentinel Helper is a Chromium extension that provides a hover-activated "Copy KQL" control for analytic rule query boxes in Microsoft Sentinel. It supports both the Azure portal (`portal.azure.com`) and the Defender portal (`security.microsoft.com`) where Sentinel functionality appears. The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
+Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft Sentinel. The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
 
 **Current Functionality**
-- **Hover copy UI:** A small "Copy KQL" button appears when you hover a detected query box and copies the rule's KQL to clipboard.
-- **Anchored in-container UI:** The button is inserted inside the detected KQL container and anchored to the top-right so it doesn't overlap portal sidebars.
-- **Monaco & tokenized KQL support:** Detects KQL rendered in Monaco editors (`.view-lines`) and tokenized DOM (many small spans) and extracts the full query text.
-- **Shadow DOM aware:** The detector searches into shadow roots to find KQL viewers.
-- **ReactBlade / iframe support:** Content scripts run in frames (manifest `host_permissions` and `all_frames`) so the extension can attach inside portal subframes such as `*.reactblade.portal.azure.net`.
-- **Defender portal support:** The extension also runs on `security.microsoft.com` (Microsoft Defender portal) and applies the same detection and copy behavior for Sentinel KQL boxes found there.
-- **Multiple detection heuristics:** Uses an ordered detection pipeline: exact selector (if provided), `.uc-kql-viewer`/inner `pre`, tokenized span heuristics (common classes), Monaco fallback, then full-`pre` scan heuristics.
-- **Manual injector:** A toolbar action (background service worker) runs a one-shot scan across all frames to attach copy controls when automatic attach fails.
-- **Auto-inject retries:** The background service worker schedules staggered execute attempts after navigation to improve reliability in the SPA environment.
-- **Duplicate prevention:** Controls are owner-tagged and proximity-checked to avoid creating duplicate copy buttons.
-- **Orphan cleanup & lifecycle handling:** MutationObservers and periodic cleanup remove buttons whose owner elements are removed or zero-sized.
-- **Pointer-based show/hide:** The UI follows the KQL box and uses pointer coordinate detection in addition to hover events to be robust against tokenized DOM where CSS `:hover` can be unreliable.
-- **Clipboard fallback:** Uses `navigator.clipboard.writeText()` with a textarea `execCommand('copy')` fallback for compatibility.
-- **Developer helpers:** Exposes debugging helpers in frames (for example `window.__sentinelKqlScan` and `window.__sentinelKqlCopyHelper`) to assist testing.
+- ** Copy KQL **: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
+
 
 **Installation (Chrome / Edge - developer mode)**
 1. Open `edge://extensions` or `chrome://extensions`.
