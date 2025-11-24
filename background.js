@@ -2,71 +2,28 @@
 
 chrome.action.onClicked.addListener((tab) => {
   if(!tab || !tab.id) return;
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id, allFrames: true },
-    func: () => {
-      try{
-        const attachOnceToPre = (p)=>{
-          if(p.__kqlCopyAttached) return false;
-          p.__kqlCopyAttached = true;
-          const btn = document.createElement('button');
-          btn.textContent = 'Copy KQL';
-          btn.style.position = 'absolute';
-          btn.style.zIndex = 2147483647;
-          btn.style.background = '#0078d4';
-          btn.style.color = 'white';
-          btn.style.border = 'none';
-          btn.style.borderRadius = '4px';
-          btn.style.padding = '6px 8px';
-          btn.style.fontSize = '12px';
-          btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
-          btn.style.cursor = 'pointer';
+  // First, cleanup any legacy/static buttons that older builds may have injected
+  const cleanupFunc = () => {
+    try{
+      // remove known class-based controls
+      document.querySelectorAll('.sentinel-kql-copy-btn').forEach(n=>n.remove());
+      // remove any buttons with the legacy label
+      Array.from(document.querySelectorAll('button')).forEach(b=>{ try{ if(b.textContent && b.textContent.includes('Copy KQL')) b.remove(); }catch(e){} });
+      // remove legacy attached flags on <pre> elements
+      document.querySelectorAll('pre').forEach(p=>{ try{ if(p.__kqlCopyAttached) delete p.__kqlCopyAttached; }catch(e){} });
+      // also clear any leftover data attributes used by prior runs
+      document.querySelectorAll('[data-sentinel-owner-id]').forEach(n=>{ try{ n.removeAttribute && n.removeAttribute('data-sentinel-owner-id'); n.removeAttribute && n.removeAttribute('__sentinel_kql_button'); }catch(e){} });
+    }catch(e){}
+  };
 
-          function position(){
-            const r = p.getBoundingClientRect();
-            btn.style.top = (window.scrollY + r.top + 6) + 'px';
-            btn.style.left = (window.scrollX + r.left + r.width - 110) + 'px';
-          }
-          position();
-          window.addEventListener('scroll', position, true);
-          window.addEventListener('resize', position);
-
-          btn.addEventListener('click', async ()=>{
-            const text = (p.innerText || '').trim();
-            try{
-              if(navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
-              else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-              btn.textContent = 'Copied ✓';
-              setTimeout(()=>btn.textContent='Copy KQL',1500);
-            }catch(e){
-              console.error('Copy failed', e);
-            }
-          });
-
-          document.body.appendChild(btn);
-          // brief highlight
-          btn.animate([{opacity:0},{opacity:1}], {duration:220});
-          return true;
-        };
-
-        const pres = Array.from(document.querySelectorAll('pre'));
-        let attached = 0;
-        for(const p of pres){
-          try{
-            const txt = (p.innerText||'').trim();
-            if(!txt || txt.length < 20) continue;
-            if(/\|/.test(txt) || /\bwhere\b|\bsummarize\b|\bjoin\b|\bsigninlogs\b|\bDeviceRegistryEvents\b/i.test(txt)){
-              if(attachOnceToPre(p)) attached++;
-            }
-          }catch(e){}
-        }
-        // return result to caller
-        return {attachedCount: attached, frameUrl: location.href};
-      }catch(err){ return {error: String(err), frameUrl: location.href}; }
-    }
-  }, (results)=>{
-    // results contains per-frame return values
-    console.log('Sentinel KQL helper injected, results:', results);
+  chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: cleanupFunc }, ()=>{
+    // Inject the content script file into all frames (if not already present), then call the exposed scan helper
+    chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content-script.js'] }, ()=>{
+      chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
+        try{ if(window.__sentinelKqlScan){ window.__sentinelKqlScan(); return {scanned:true, frameUrl: location.href}; } return {scanned:false, frameUrl: location.href}; }
+        catch(err){ return {error: String(err), frameUrl: location.href}; }
+      } }, (results)=>{ console.log('Sentinel KQL helper injected/scan results:', results); });
+    });
   });
 });
 
@@ -80,68 +37,30 @@ function shouldInject(tabId){
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if(changeInfo.status === 'complete' && tab && tab.url && (/portal.azure.com/.test(tab.url) || /security.microsoft.com/.test(tab.url))){
+    if(changeInfo.status === 'complete' && tab && tab.url && (/portal.azure.com/.test(tab.url) || /security.microsoft.com/.test(tab.url))){
     if(!shouldInject(tabId)) return;
     // Multiple injection attempts across a short time window to catch late-rendered frames
     const attempts = [0, 700, 1600, 3500, 7000];
     for(const delayMs of attempts){
       setTimeout(()=>{
-        chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => {
-      try{
-        const attachOnceToPre = (p)=>{
-          if(p.__kqlCopyAttached) return false;
-          p.__kqlCopyAttached = true;
-          const btn = document.createElement('button');
-          btn.textContent = 'Copy KQL';
-          btn.style.position = 'absolute';
-          btn.style.zIndex = 2147483647;
-          btn.style.background = '#0078d4';
-          btn.style.color = 'white';
-          btn.style.border = 'none';
-          btn.style.borderRadius = '4px';
-          btn.style.padding = '6px 8px';
-          btn.style.fontSize = '12px';
-          btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
-          btn.style.cursor = 'pointer';
-
-          function position(){
-            const r = p.getBoundingClientRect();
-            btn.style.top = (window.scrollY + r.top + 6) + 'px';
-            btn.style.left = (window.scrollX + r.left + r.width - 110) + 'px';
-          }
-          position();
-          window.addEventListener('scroll', position, true);
-          window.addEventListener('resize', position);
-
-          btn.addEventListener('click', async ()=>{
-            const text = (p.innerText || '').trim();
-            try{
-              if(navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
-              else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-              btn.textContent = 'Copied ✓';
-              setTimeout(()=>btn.textContent='Copy KQL',1500);
-            }catch(e){ console.error('Copy failed', e); }
-          });
-
-          document.body.appendChild(btn);
-          btn.animate([{opacity:0},{opacity:1}], {duration:220});
-          return true;
-        };
-
-        const pres = Array.from(document.querySelectorAll('pre'));
-        let attached = 0;
-        for(const p of pres){
+        // Clean up legacy/static buttons first
+        const cleanupFunc = () => {
           try{
-            const txt = (p.innerText||'').trim();
-            if(!txt || txt.length < 20) continue;
-            if(/\|/.test(txt) || /\bwhere\b|\bsummarize\b|\bjoin\b|\bsigninlogs\b|\bDeviceRegistryEvents\b/i.test(txt)){
-              if(attachOnceToPre(p)) attached++;
-            }
+            document.querySelectorAll('.sentinel-kql-copy-btn').forEach(n=>n.remove());
+            Array.from(document.querySelectorAll('button')).forEach(b=>{ try{ if(b.textContent && b.textContent.includes('Copy KQL')) b.remove(); }catch(e){} });
+            document.querySelectorAll('pre').forEach(p=>{ try{ if(p.__kqlCopyAttached) delete p.__kqlCopyAttached; }catch(e){} });
+            document.querySelectorAll('[data-sentinel-owner-id]').forEach(n=>{ try{ n.removeAttribute && n.removeAttribute('data-sentinel-owner-id'); n.removeAttribute && n.removeAttribute('__sentinel_kql_button'); }catch(e){} });
           }catch(e){}
-        }
-        return {attachedCount: attached, frameUrl: location.href};
-      }catch(err){ return {error: String(err), frameUrl: location.href}; }
-        }});
+        };
+        chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: cleanupFunc }, ()=>{
+          // Inject content-script.js into all frames, then ask each frame to run its scan helper.
+          chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content-script.js'] }, ()=>{
+            chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => {
+              try{ if(window.__sentinelKqlScan){ window.__sentinelKqlScan(); return {scanned:true, frameUrl: location.href}; } return {scanned:false, frameUrl: location.href}; }
+              catch(err){ return {error: String(err), frameUrl: location.href}; }
+            } }, (results)=>{ console.log('Sentinel KQL auto-inject scan results:', results); });
+          });
+        });
       }, delayMs);
     }
   }

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Sentinel Helper Options</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; padding: 18px; color: #222; }
+      h1 { font-size: 18px; margin-bottom: 8px; }
+      label { display: block; margin: 8px 0; }
+      .note { color: #666; font-size: 12px; margin-top: 12px; }
+      button { margin-top: 12px; padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; background: #f6f6f6; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1>Sentinel Helper — Options</h1>
+    <form id="optionsForm">
+      <label>
+        <input type="checkbox" id="dbg" />
+        Enable debug logging
+      </label>
+      <label>
+        <input type="checkbox" id="vdbg" />
+        Enable verbose debug logging (more noisy)
+      </label>
+      <div class="note">Changing these options takes effect immediately in open pages where the extension is active.</div>
+      <button id="save">Save</button>
+      <button id="close" type="button">Close</button>
+    </form>
+    <script src="options.js"></script>
+  </body>
+</html>

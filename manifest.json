@@ -6,7 +6,8 @@
   "permissions": [
     "activeTab",
     "clipboardWrite",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "https://portal.azure.com/*",
@@ -41,4 +42,9 @@
       "all_frames": true
     }
   ]
+  ,
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
 }

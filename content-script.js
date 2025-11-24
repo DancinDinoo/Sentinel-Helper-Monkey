@@ -12,9 +12,23 @@
 
   const BTN_ID = 'sentinel-kql-copy-btn';
   const ENH_ATTR = 'data-sentinel-enhanced';
-  const DEBUG = true;
+  let DEBUG = false;
   // verbose debug toggles more detailed per-scan selector logs; keep false to reduce noise
-  const VERBOSE_DEBUG = false;
+  let VERBOSE_DEBUG = false;
+
+  // Read runtime options from chrome.storage (options page toggles)
+  try{
+    if(typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync){
+      chrome.storage.sync.get({ debug: false, verbose: false }, (res)=>{
+        try{ DEBUG = !!res.debug; VERBOSE_DEBUG = !!res.verbose; }catch(e){}
+      });
+      chrome.storage.onChanged.addListener((changes, area)=>{
+        if(area !== 'sync') return;
+        if(changes.debug) { DEBUG = !!changes.debug.newValue; }
+        if(changes.verbose) { VERBOSE_DEBUG = !!changes.verbose.newValue; }
+      });
+    }
+  }catch(e){ /* ignore storage errors */ }
 
   // whether we've attached at least one button already in this frame
   let foundAny = false;
