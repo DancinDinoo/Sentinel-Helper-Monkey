@@ -80,7 +80,7 @@ function shouldInject(tabId){
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if(changeInfo.status === 'complete' && tab && tab.url && /portal.azure.com/.test(tab.url)){
+  if(changeInfo.status === 'complete' && tab && tab.url && (/portal.azure.com/.test(tab.url) || /security.microsoft.com/.test(tab.url))){
     if(!shouldInject(tabId)) return;
     // Multiple injection attempts across a short time window to catch late-rendered frames
     const attempts = [0, 700, 1600, 3500, 7000];

@@ -13,11 +13,17 @@
   const BTN_ID = 'sentinel-kql-copy-btn';
   const ENH_ATTR = 'data-sentinel-enhanced';
   const DEBUG = true;
+  // verbose debug toggles more detailed per-scan selector logs; keep false to reduce noise
+  const VERBOSE_DEBUG = false;
 
   // whether we've attached at least one button already in this frame
   let foundAny = false;
   // count how many scans we've attempted in this frame (for diagnostics)
   let scanAttempts = 0;
+  // last time a scan was scheduled (ms)
+  let lastScanAt = 0;
+  // suppression window: when a control is attached, suppress polling until this timestamp
+  let attachSuppressedUntil = 0;
 
   // Insert styles for the floating button
   function injectStyles(){
@@ -274,7 +280,7 @@
   // Note: expose `__sentinelKqlScan` after scanAndAttach is defined (done below)
 
   function scanAndAttach(){
-    if(DEBUG) console.debug('[Sentinel KQL] scanAndAttach running, foundAny=', foundAny);
+    if(DEBUG && VERBOSE_DEBUG) console.debug('[Sentinel KQL] scanAndAttach running, foundAny=', foundAny);
     // track attempts so we can surface a louder warning if nothing is ever found
     scanAttempts = (typeof scanAttempts === 'number') ? scanAttempts + 1 : 1;
     // Note: we do not bail early if we've attached before; keep scanning so
@@ -374,11 +380,18 @@
     }catch(e){ console.debug('pre-content detection failed', e); }
 
     // if nothing found, we'll rely on MutationObserver to re-run scan
-    if(DEBUG) console.debug('[Sentinel KQL] scanAndAttach found nothing; will retry on DOM changes');
-    if(scanAttempts >= 4){
-      console.warn('[Sentinel KQL] scanAndAttach has run', scanAttempts, 'times without finding a candidate. Collecting diagnostic candidate info now.');
-      try{ dumpCandidateDiagnostics(); }catch(e){ console.warn('[Sentinel KQL] dumpCandidateDiagnostics failed', e); }
-      console.warn('[Sentinel KQL] If this persists, open the frame console and run `window.__sentinelKqlScan()` or `window.__sentinelKqlDumpCandidates()` to inspect elements.');
+    if(DEBUG && VERBOSE_DEBUG) console.debug('[Sentinel KQL] scanAndAttach found nothing; will retry on DOM changes');
+    // If we've scanned several times without finding anything, suppress further scans
+    const MAX_FAILURES = 12; // per-frame failure cap before temporary suppression
+    if(scanAttempts >= MAX_FAILURES && !foundAny){
+      // suppress further scans in this frame for 30s (until DOM changes or user gesture)
+      const now = Date.now();
+      if(now >= attachSuppressedUntil){
+        attachSuppressedUntil = now + 30000;
+        console.warn('[Sentinel KQL] No KQL candidates found after', scanAttempts, 'attempts in this frame — temporarily suppressing scans for 30s. Interact with the frame or reload to retry.');
+        try{ dumpCandidateDiagnostics(); }catch(e){ if(DEBUG) console.warn('[Sentinel KQL] dumpCandidateDiagnostics failed', e); }
+      }
+      return;
     }
   }
 
@@ -434,6 +447,12 @@
   // throttled scanner
   let scanTimer = null;
   function scheduleScan(delay=400){
+    const now = Date.now();
+    // if we're in a suppression window (recent attach), skip scheduling
+    if(now < attachSuppressedUntil){ if(DEBUG) console.debug('[Sentinel KQL] scan suppressed until', new Date(attachSuppressedUntil)); return; }
+    // simple rate-limit: don't schedule scans more often than 250ms
+    if(now - lastScanAt < 250){ if(DEBUG) console.debug('[Sentinel KQL] scheduleScan rate-limited'); return; }
+    lastScanAt = now;
     clearTimeout(scanTimer);
     scanTimer = setTimeout(scanAndAttach, delay);
   }
@@ -464,7 +483,22 @@
     scheduleScan(600);
     // Watch for dynamic UI changes in the portal (single-page app)
     const mo = new MutationObserver((mutations)=>{
-      if(DEBUG) console.debug('[Sentinel KQL] MutationObserver triggered');
+      // If we're suppressed due to repeated failures, wake up on meaningful DOM changes
+      try{
+        if(attachSuppressedUntil && Date.now() < attachSuppressedUntil){
+          // look for added/removed nodes as a sign of the UI changing
+          let significant = false;
+          for(const m of mutations){ if((m.addedNodes && m.addedNodes.length) || (m.removedNodes && m.removedNodes.length)){ significant = true; break; } }
+          if(significant){
+            attachSuppressedUntil = 0;
+            if(DEBUG) console.debug('[Sentinel KQL] DOM change detected during suppression — re-enabling scans');
+            scheduleScan(200);
+            return;
+          }
+          return; // remain suppressed
+        }
+      }catch(e){/*ignore*/}
+      if(DEBUG && VERBOSE_DEBUG) console.debug('[Sentinel KQL] MutationObserver triggered');
       scheduleScan(300);
     });
     mo.observe(document.body, {childList:true, subtree:true, attributes:false});
@@ -474,7 +508,7 @@
     const POLL_INTERVAL = 300; // ms
     const startTs = Date.now();
     const poll = setInterval(()=>{
-      try{ scanAndAttach(); }catch(e){ if(DEBUG) console.debug('poll error', e); }
+      try{ scheduleScan(0); }catch(e){ if(DEBUG) console.debug('poll error', e); }
       if((Date.now() - startTs) > POLL_DURATION) clearInterval(poll);
     }, POLL_INTERVAL);
 

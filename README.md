@@ -1,6 +1,6 @@
 ﻿# Sentinel Helper Extension
 
-Sentinel Helper is a Chromium extension that provides a hover-activated "Copy KQL" control for analytic rule query boxes in Microsoft Sentinel (portal.azure.com). The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
+Sentinel Helper is a Chromium extension that provides a hover-activated "Copy KQL" control for analytic rule query boxes in Microsoft Sentinel. It supports both the Azure portal (`portal.azure.com`) and the Defender portal (`security.microsoft.com`) where Sentinel functionality appears. The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
 
 **Current Functionality**
 - **Hover copy UI:** A small "Copy KQL" button appears when you hover a detected query box and copies the rule's KQL to clipboard.
@@ -8,6 +8,7 @@ Sentinel Helper is a Chromium extension that provides a hover-activated "Copy KQ
 - **Monaco & tokenized KQL support:** Detects KQL rendered in Monaco editors (`.view-lines`) and tokenized DOM (many small spans) and extracts the full query text.
 - **Shadow DOM aware:** The detector searches into shadow roots to find KQL viewers.
 - **ReactBlade / iframe support:** Content scripts run in frames (manifest `host_permissions` and `all_frames`) so the extension can attach inside portal subframes such as `*.reactblade.portal.azure.net`.
+- **Defender portal support:** The extension also runs on `security.microsoft.com` (Microsoft Defender portal) and applies the same detection and copy behavior for Sentinel KQL boxes found there.
 - **Multiple detection heuristics:** Uses an ordered detection pipeline: exact selector (if provided), `.uc-kql-viewer`/inner `pre`, tokenized span heuristics (common classes), Monaco fallback, then full-`pre` scan heuristics.
 - **Manual injector:** A toolbar action (background service worker) runs a one-shot scan across all frames to attach copy controls when automatic attach fails.
 - **Auto-inject retries:** The background service worker schedules staggered execute attempts after navigation to improve reliability in the SPA environment.
@@ -42,13 +43,10 @@ Sentinel Helper is a Chromium extension that provides a hover-activated "Copy KQ
 - Keyboard shortcuts for quick copy.
 - Copy with optional context (rule name, timeframe) or export options.
 - Package and publish builds (CRX) with signing instructions.
-- Support for Security.Microsoft.com (Unified/Defender)
 
 **Reload steps after changing permissions**
 1. On the extensions page (`edge://extensions` or `chrome://extensions`) click the extension's "Reload" button.
 2. Reload the portal page (`F5`) so iframe content reloads and the content script can run inside it.
 
-
 ---
 _Last updated: November 24, 2025_
-
