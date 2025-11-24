@@ -3,7 +3,7 @@
 Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft Sentinel. The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
 
 **Current Functionality**
-- ** Copy KQL **: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
+- **Copy KQL**: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
 
 
 **Installation (Chrome / Edge - developer mode)**
