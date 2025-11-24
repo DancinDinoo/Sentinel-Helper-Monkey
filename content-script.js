@@ -16,6 +16,8 @@
 
   // whether we've attached at least one button already in this frame
   let foundAny = false;
+  // count how many scans we've attempted in this frame (for diagnostics)
+  let scanAttempts = 0;
 
   // Insert styles for the floating button
   function injectStyles(){
@@ -59,8 +61,26 @@
   function addButtonFor(el){
     if(!el) return;
     if(el.getAttribute && el.getAttribute('__sentinel_kql_button')){
-      if(DEBUG) console.log('[Sentinel KQL] already enhanced element', el);
-      return;
+      // If a previous run marked this element but the control no longer
+      // exists (orphaned), remove the stale marker so we can recreate it.
+      try{
+        const existingOwner = el.getAttribute('data-sentinel-owner-id');
+        if(existingOwner){
+          const controlExists = !!document.querySelector(`[data-sentinel-control-owner="${existingOwner}"]`);
+          if(controlExists){
+            if(DEBUG) console.log('[Sentinel KQL] already enhanced element (control exists)', el);
+            return;
+          } else {
+            if(DEBUG) console.log('[Sentinel KQL] stale enhancement marker found, removing and recreating', el, 'ownerId=', existingOwner);
+            try{ el.removeAttribute('__sentinel_kql_button'); }catch(e){}
+            try{ el.removeAttribute && el.removeAttribute('data-sentinel-owner-id'); }catch(e){}
+            // continue to recreate control
+          }
+        } else {
+          if(DEBUG) console.log('[Sentinel KQL] enhancement marker present without owner id, removing', el);
+          try{ el.removeAttribute('__sentinel_kql_button'); }catch(e){}
+        }
+      }catch(e){ if(DEBUG) console.debug('[Sentinel KQL] error checking existing enhancement marker', e); }
     }
     // Avoid creating duplicate controls near the same area. If an existing
     // sentinel control button is already within ~56px of this element, skip adding.
@@ -255,6 +275,8 @@
 
   function scanAndAttach(){
     if(DEBUG) console.debug('[Sentinel KQL] scanAndAttach running, foundAny=', foundAny);
+    // track attempts so we can surface a louder warning if nothing is ever found
+    scanAttempts = (typeof scanAttempts === 'number') ? scanAttempts + 1 : 1;
     // Note: we do not bail early if we've attached before; keep scanning so
     // we can clean up orphaned buttons when the portal's SPA navigates quickly.
 
@@ -353,7 +375,58 @@
 
     // if nothing found, we'll rely on MutationObserver to re-run scan
     if(DEBUG) console.debug('[Sentinel KQL] scanAndAttach found nothing; will retry on DOM changes');
+    if(scanAttempts >= 4){
+      console.warn('[Sentinel KQL] scanAndAttach has run', scanAttempts, 'times without finding a candidate. Collecting diagnostic candidate info now.');
+      try{ dumpCandidateDiagnostics(); }catch(e){ console.warn('[Sentinel KQL] dumpCandidateDiagnostics failed', e); }
+      console.warn('[Sentinel KQL] If this persists, open the frame console and run `window.__sentinelKqlScan()` or `window.__sentinelKqlDumpCandidates()` to inspect elements.');
+    }
   }
+
+  // Diagnostic helper: collect candidate elements and sample text for debugging
+  function dumpCandidateDiagnostics(){
+    const info = {};
+    try{
+      // exact selector
+      const EXACT_SELECTOR = '#root > div > div > main > div.sc-kdBSHD.jLOLSm.uc-collapsible-container.uc-collapsible-primary-left.W6fkE > div.sc-tagGq.hiXBlU.uc-collapsible-section-container > div.collapsibleContentAutoCollapse > div > div.vCdKM > div > div > div.itemContainer-196 > div > div:nth-child(4) > div > div > pre';
+      const exactEl = document.querySelector(EXACT_SELECTOR);
+      info.exact = exactEl ? {found:true, outerHTML: (exactEl.outerHTML||'').slice(0,800)} : {found:false};
+
+      // uc-kql-viewer
+      const kqlViewerEls = findAll('.uc-kql-viewer');
+      info.ucKqlViewerCount = kqlViewerEls.length;
+      info.ucKqlViewerSamples = kqlViewerEls.slice(0,5).map(e=>({tag:e.tagName, sample: (e.innerText||'').slice(0,300)}));
+
+      // common selectors
+      const selectors = ['.monaco-editor', 'textarea', 'pre.kusto', 'pre', 'code', '[role=region] [role=textbox]'];
+      info.selectors = {};
+      for(const sel of selectors){
+        try{
+          const els = findAll(sel);
+          info.selectors[sel] = {count: els.length, samples: els.slice(0,5).map(e=>({tag:e.tagName, text:(e.innerText||'').slice(0,300)}))};
+        }catch(e){ info.selectors[sel] = {error: String(e)}; }
+      }
+
+      // highlight spans
+      const highlightSelector = '.keyword, .schema-table, .function, .schema-column, .class-name, .string, .comment';
+      const spanEls = findAll(highlightSelector);
+      info.highlightSpanCount = spanEls.length;
+      info.highlightSpanSamples = spanEls.slice(0,10).map(s=>({tag:s.tagName, text:(s.innerText||'').slice(0,120)}));
+
+      // pre blocks
+      const pres = findAll('pre');
+      info.preCount = pres.length;
+      info.preSamples = pres.slice(0,6).map(p=>({text:(p.innerText||'').slice(0,500)}));
+
+    }catch(e){ console.warn('[Sentinel KQL] dumpCandidateDiagnostics error', e); }
+    // Log structured info
+    console.groupCollapsed('[Sentinel KQL] Candidate diagnostics');
+    console.log(info);
+    console.groupEnd();
+    return info;
+  }
+
+  // Expose a console helper for interactive dumps
+  try{ window.__sentinelKqlDumpCandidates = dumpCandidateDiagnostics; }catch(e){/*ignore*/}
 
     // expose a manual scan function for debugging (callable from the frame console)
     try{ window.__sentinelKqlScan = scanAndAttach; }catch(e){/*ignore*/}
@@ -396,9 +469,9 @@
     });
     mo.observe(document.body, {childList:true, subtree:true, attributes:false});
 
-    // Additionally poll for a short time because some parts render after many micro-tasks
-    const POLL_DURATION = 12000; // ms
-    const POLL_INTERVAL = 350; // ms
+    // Additionally poll for a longer window because some parts render after many micro-tasks
+    const POLL_DURATION = 25000; // ms (extended to handle slow iframe/rendering)
+    const POLL_INTERVAL = 300; // ms
     const startTs = Date.now();
     const poll = setInterval(()=>{
       try{ scanAndAttach(); }catch(e){ if(DEBUG) console.debug('poll error', e); }
@@ -428,6 +501,18 @@
             const br = btn.getBoundingClientRect();
             if(br.width === 0 && br.height === 0) remove = true;
             if(remove){ btn.remove(); }
+            if(remove){
+              // also attempt to clear stale owner attributes if present
+              try{
+                if(ownerId){
+                  const ownerEl = document.querySelector(`[data-sentinel-owner-id="${ownerId}"]`);
+                  if(ownerEl){
+                    try{ ownerEl.removeAttribute('__sentinel_kql_button'); }catch(e){}
+                    try{ ownerEl.removeAttribute('data-sentinel-owner-id'); }catch(e){}
+                  }
+                }
+              }catch(e){/*ignore*/}
+            }
           }catch(e){}
         });
       }catch(e){}
@@ -453,6 +538,12 @@
         }, 180);
         hoverMap.set(candidate, timer);
       }catch(e){}
+    }, true);
+
+    // Also trigger a scan on user pointerdown actions (click/press) anywhere in the frame.
+    // This helps in cases where automatic scans miss content due to timing or shadow DOM quirks.
+    document.addEventListener('pointerdown', (ev)=>{
+      try{ if(DEBUG) console.debug('[Sentinel KQL] pointerdown detected, scheduling immediate scan'); scheduleScan(120); }catch(e){}
     }, true);
 
     // Use pointer-based detection to show/hide buttons. Relying on :hover

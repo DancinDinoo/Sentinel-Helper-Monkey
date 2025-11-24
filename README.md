@@ -38,14 +38,18 @@ Sentinel Helper is a Chromium extension that provides a hover-activated "Copy KQ
 - Heuristics are intentionally layered and conservative to avoid false positives; you can tweak selectors and timing in `content-script.js` while testing locally.
 
 **Planned / Future Features**
+- Add a small options UI to configure behavior (enable/disable auto-inject, toggle heuristics, custom selectors).
 - Keyboard shortcuts for quick copy.
 - Copy with optional context (rule name, timeframe) or export options.
-- Support for Security.Microsoft.com (Unified/Defender Portal)
+- Package and publish builds (CRX) with signing instructions.
 
 **Reload steps after changing permissions**
 1. On the extensions page (`edge://extensions` or `chrome://extensions`) click the extension's "Reload" button.
 2. Reload the portal page (`F5`) so iframe content reloads and the content script can run inside it.
 
+If you'd like, I can also:
+- Add a short developer guide for testing inside reactblade frames.
+- Prepare a packaged build and a short test checklist for QA.
 
+---
 _Last updated: November 24, 2025_
-
