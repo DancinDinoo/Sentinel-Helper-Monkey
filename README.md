@@ -3,11 +3,11 @@
 Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft Sentinel. The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
 
 **Current Functionality**
-- ** Copy KQL **: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
+- **Copy KQL**: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
 
-- ** Manual Force Copy KQL Button ** - Sometimes the copy KQL button doesn't load automatically, this forces the button to be generated.
+- **Manual Force Copy KQL Button** - Sometimes the copy KQL button doesn't load automatically, this forces the button to be generated.
 
-- ** Automatically Refresh Incidents **: Defaulted to 30 seconds Incidents in either security.microsoft.com and mto.security.microsoft.com will automatically refresh. The time since last refresh is can be seen within the menu panel.
+- **Automatically Refresh Incidents**: Defaulted to 30 seconds Incidents in either security.microsoft.com and mto.security.microsoft.com will automatically refresh. The time since last refresh is can be seen within the menu panel.
 
 **Installation (Chrome / Edge - developer mode)**
 1. Open `edge://extensions` or `chrome://extensions`.
