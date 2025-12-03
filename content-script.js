@@ -4,6 +4,12 @@
 (function(){
   'use strict';
 
+  // Prevent multiple concurrent instances (re-injections) from creating duplicate timers/refreshes.
+  if(typeof window !== 'undefined'){
+    if(window.__sentinelHelperInitialized){ return; }
+    window.__sentinelHelperInitialized = true;
+  }
+
   // Debug marker: helps verify the content script actually loaded in this frame
   try{
     console.log('[Sentinel KQL Copy Helper] content script loaded in frame:', location.href);
@@ -15,12 +21,37 @@
   let DEBUG = false;
   // verbose debug toggles more detailed per-scan selector logs; keep false to reduce noise
   let VERBOSE_DEBUG = false;
+  const PANEL_ID = 'sentinel-helper-panel';
+  const PANEL_RUN_BTN_ID = 'sentinel-kql-run-btn';
+  const PANEL_TIMER_ID = 'sentinel-incident-timer';
+  const PANEL_STATUS_ID = 'sentinel-incident-status';
+  const INCIDENT_REFRESH_INTERVAL = 30000;
+  const INCIDENT_HOSTS = ['mto.security.microsoft.com', 'security.microsoft.com'];
+  const IS_TOP_FRAME = window === window.top;
+
+  let controlPanelEl = null;
+  let lastIncidentRefreshAt = null;
+  let incidentRefreshTimeoutId = null;
+  let nextIncidentRefreshAt = null;
+  let incidentRefreshInFlight = false;
+  let incidentTimerTickerId = null;
+  let urlWatchIntervalId = null;
+  let lastSeenIncidentUrl = null;
+  let historyHooked = false;
+
+  function restartIncidentAutoRefresh(){
+    stopIncidentAutoRefresh();
+    startIncidentAutoRefresh();
+  }
 
   // Read runtime options from chrome.storage (options page toggles)
   try{
     if(typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync){
       chrome.storage.sync.get({ debug: false, verbose: false }, (res)=>{
-        try{ DEBUG = !!res.debug; VERBOSE_DEBUG = !!res.verbose; }catch(e){}
+        try{
+          DEBUG = !!res.debug;
+          VERBOSE_DEBUG = !!res.verbose;
+        }catch(e){}
       });
       chrome.storage.onChanged.addListener((changes, area)=>{
         if(area !== 'sync') return;
@@ -29,6 +60,55 @@
       });
     }
   }catch(e){ /* ignore storage errors */ }
+
+  // Listen for background messages (toggle panel)
+  let lastToggleRequestAt = 0;
+  function canHandleToggleRequest(){
+    let topHasHelper = false;
+    try{ topHasHelper = !!(window.top && window.top.__sentinelHelperInitialized); }catch(e){}
+    const panelHere = !!document.getElementById(PANEL_ID);
+    return IS_TOP_FRAME || !topHasHelper || isIncidentContext() || panelHere;
+  }
+  function processToggleRequest(){
+    if(!canHandleToggleRequest()) return false;
+    const now = Date.now();
+    if(now - lastToggleRequestAt < 80) return false; // tighter debounce to avoid visible delay
+    lastToggleRequestAt = now;
+    handleIncidentPageState();
+    scheduleScan(0);
+    toggleControlPanel();
+    return true;
+  }
+  try{
+    if(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage){
+      chrome.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
+        if(!msg || !msg.type) return;
+        if(msg.type === 'sentinel:toggle-panel'){
+          const handled = processToggleRequest();
+          try{ sendResponse && sendResponse({ panelVisible: !isPanelHidden(), handled }); }catch(e){}
+        }
+      });
+    }
+  }catch(e){ /* ignore message errors */ }
+  try{
+    window.addEventListener('message', (ev)=>{
+      try{
+        if(!ev || !ev.data || ev.origin === 'null') return;
+        if(ev.data.type === 'sentinel:hide-panel'){
+          hideControlPanel();
+          if(IS_TOP_FRAME){
+            try{
+              const frames = Array.from(window.frames || []);
+              frames.forEach(f=>{ try{ f.postMessage({ type: 'sentinel:hide-panel' }, '*'); }catch(e){} });
+            }catch(e){}
+          }
+        }
+      }catch(e){}
+    }, true);
+  }catch(e){/* ignore */}
+  try{
+    window.addEventListener('sentinel:toggle-panel-local', ()=>{ try{ processToggleRequest(); }catch(e){} }, true);
+  }catch(e){/* ignore */}
 
   // whether we've attached at least one button already in this frame
   let foundAny = false;
@@ -57,10 +137,440 @@
         transition: transform 0.08s ease;
       }
       .sentinel-kql-copy-btn:active { transform: scale(0.98); }
+      #${PANEL_ID} {
+        position: fixed;
+        bottom: 16px;
+        right: 16px;
+        z-index: 2147483647;
+        background: #ffffff;
+        color: #0f172a;
+        border: 1px solid rgba(15,23,42,0.08);
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+        min-width: 260px;
+        max-width: 320px;
+        padding: 12px;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        display: none;
+        gap: 12px;
+        flex-direction: column;
+      }
+      #${PANEL_ID} .sentinel-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: 0.01em;
+      }
+      #${PANEL_ID} .sentinel-panel-meta {
+        font-size: 11px;
+        color: #475569;
+        margin-top: 2px;
+      }
+      #${PANEL_ID} .sentinel-panel-close {
+        background: none;
+        border: none;
+        color: #0f172a;
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        padding: 4px;
+        border-radius: 6px;
+      }
+      #${PANEL_ID} .sentinel-panel-close:hover { background: rgba(15,23,42,0.06); }
+      #${PANEL_ID} .sentinel-panel-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 4px;
+      }
+      #${PANEL_ID} .sentinel-panel-action {
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 12px;
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 13px;
+        box-shadow: 0 6px 16px rgba(37,99,235,0.25);
+        transition: transform 0.08s ease, box-shadow 0.12s ease;
+      }
+      #${PANEL_ID} .sentinel-panel-action:hover { box-shadow: 0 8px 18px rgba(37,99,235,0.30); }
+      #${PANEL_ID} .sentinel-panel-action:active { transform: scale(0.99); }
+      #${PANEL_ID} .sentinel-refresh-block {
+        font-size: 12px;
+        line-height: 1.5;
+        color: #334155;
+        border: 1px solid rgba(15,23,42,0.08);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #f8fafc;
+      }
+      #${PANEL_ID} .sentinel-refresh-timer {
+        font-variant-numeric: tabular-nums;
+        margin-top: 4px;
+        color: #0f172a;
+        font-weight: 600;
+      }
     `;
     const s = document.createElement('style');
     s.textContent = css;
     document.head.appendChild(s);
+  }
+
+  function isIncidentPage(url){
+    try{
+      const href = (url || location.href || '').toLowerCase();
+      const u = new URL(url || location.href);
+      if(!INCIDENT_HOSTS.includes(u.host)) return false;
+      const pathHash = ((u.pathname || '') + ' ' + (u.hash || '')).toLowerCase();
+      // The Incidents surface sometimes lives under hash routes; allow any
+      // combination of path/hash containing "incidents" to qualify.
+      if(pathHash.includes('/incidents') || pathHash.includes('#/incidents')) return true;
+      if(/(?:\?|&)incident(id)?=/.test(u.search || '')) return true;
+      if(href.includes('/incidents')) return true;
+      return false;
+    }catch(e){
+      return false;
+    }
+  }
+
+  function isIncidentContext(){
+    try{ if(isIncidentPage(location.href)) return true; }catch(e){}
+    try{
+      const topHref = window.top && window.top.location && window.top.location.href;
+      if(topHref && isIncidentPage(topHref)) return true;
+    }catch(e){}
+    try{
+      const parentHref = window.parent && window.parent.location && window.parent.location.href;
+      if(parentHref && isIncidentPage(parentHref)) return true;
+    }catch(e){}
+    try{
+      if(document.referrer && /security\.microsoft\.com\/.*incidents/i.test(document.referrer)) return true;
+    }catch(e){}
+    return false;
+  }
+
+  function forceShowControlPanel(){
+    const panel = ensureControlPanel();
+    if(!panel) return false;
+    panel.style.display = 'flex';
+    panel.setAttribute('data-hidden','0');
+    if(isIncidentContext()) startIncidentAutoRefresh();
+    updateIncidentTimerLabel();
+    return true;
+  }
+  try{ window.__sentinelShowPanel = forceShowControlPanel; }catch(e){}
+
+  function updateIncidentTimerLabel(){
+    const timerEl = document.getElementById(PANEL_TIMER_ID);
+    const statusEl = document.getElementById(PANEL_STATUS_ID);
+    let active = !!incidentRefreshTimeoutId;
+    const onIncident = isIncidentContext();
+    if(onIncident && !active){
+      startIncidentAutoRefresh();
+      active = !!incidentRefreshTimeoutId;
+    }
+    if(statusEl){
+      if(onIncident && active) statusEl.textContent = 'Incident auto-refresh running (every 30s)';
+      else if(onIncident && incidentRefreshInFlight) statusEl.textContent = 'Incident auto-refresh running (refreshing...)';
+      else if(onIncident) statusEl.textContent = 'Incident auto-refresh paused on this page';
+      else statusEl.textContent = 'Incident auto-refresh not active on this page';
+    }
+    if(!timerEl){
+      return;
+    }
+    if(!onIncident){
+      timerEl.textContent = 'Refresh is inactive (not on incidents page)';
+      return;
+    }
+    if(!active){
+      // Provide forward-looking countdown even if timer not yet scheduled
+      const targetTs = nextIncidentRefreshAt || (Date.now() + INCIDENT_REFRESH_INTERVAL);
+      const remainingMs = Math.max(0, targetTs - Date.now());
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      timerEl.textContent = `Next incident refresh in ${remainingSec}s`;
+      return;
+    }
+    const targetTs = nextIncidentRefreshAt || (Date.now() + INCIDENT_REFRESH_INTERVAL);
+    const remainingMs = Math.max(0, targetTs - Date.now());
+    const remainingSec = Math.ceil(remainingMs / 1000);
+    timerEl.textContent = `Next incident refresh in ${remainingSec}s`;
+  }
+
+  function startIncidentTimerTicker(){
+    if(incidentTimerTickerId) return;
+    updateIncidentTimerLabel();
+    incidentTimerTickerId = setInterval(updateIncidentTimerLabel, 1000);
+  }
+
+  function stopIncidentTimerTicker(){
+    if(incidentTimerTickerId){
+      clearInterval(incidentTimerTickerId);
+      incidentTimerTickerId = null;
+    }
+  }
+
+  function scheduleNextIncidentRefresh(){
+    const isOwnerFrame = IS_TOP_FRAME || isIncidentContext();
+    if(!isOwnerFrame) return;
+    if(!isIncidentContext()) return;
+    if(incidentRefreshTimeoutId){
+      clearTimeout(incidentRefreshTimeoutId);
+      incidentRefreshTimeoutId = null;
+    }
+    nextIncidentRefreshAt = Date.now() + INCIDENT_REFRESH_INTERVAL;
+    incidentRefreshTimeoutId = setTimeout(()=>{
+      incidentRefreshTimeoutId = null;
+      performIncidentRefresh();
+    }, INCIDENT_REFRESH_INTERVAL);
+    updateIncidentTimerLabel();
+  }
+
+  function tryIncidentRefreshAction(){
+    try{
+      const selectors = [
+        'button[aria-label=\"Refresh\"]',
+        'button[title=\"Refresh\"]',
+        'button[data-automationid=\"refreshButton\"]',
+        'button[data-telemetryname=\"Refresh\"]',
+        'button[name=\"Refresh\"]'
+      ];
+      for(const sel of selectors){
+        const btn = document.querySelector(sel);
+        if(btn && !btn.disabled){
+          btn.click();
+          return true;
+        }
+      }
+      const candidate = Array.from(document.querySelectorAll('button')).find(b=>/refresh/i.test(b.textContent || '') && !b.disabled);
+      if(candidate){
+        candidate.click();
+        return true;
+      }
+    }catch(e){ /* ignore refresh lookup errors */ }
+    return false;
+  }
+
+  function performIncidentRefresh(){
+    if(incidentRefreshInFlight) return false;
+    incidentRefreshInFlight = true;
+    let refreshed = false;
+    try{ refreshed = tryIncidentRefreshAction(); }catch(e){}
+    if(!refreshed){
+      try{ location.reload(); refreshed = true; }catch(e){}
+    }
+    lastIncidentRefreshAt = Date.now();
+    incidentRefreshInFlight = false;
+    scheduleNextIncidentRefresh();
+    updateIncidentTimerLabel();
+    return refreshed;
+  }
+
+  function startIncidentAutoRefresh(){
+    const isOwnerFrame = IS_TOP_FRAME || isIncidentContext();
+    if(!isOwnerFrame) return;
+    if(incidentRefreshTimeoutId) return;
+    if(!isIncidentContext()) return;
+    lastIncidentRefreshAt = Date.now();
+    startIncidentTimerTicker();
+    scheduleNextIncidentRefresh();
+    updateIncidentTimerLabel();
+  }
+
+  function stopIncidentAutoRefresh(){
+    if(incidentRefreshTimeoutId){
+      clearTimeout(incidentRefreshTimeoutId);
+      incidentRefreshTimeoutId = null;
+    }
+    nextIncidentRefreshAt = null;
+    stopIncidentTimerTicker();
+    lastIncidentRefreshAt = null;
+    updateIncidentTimerLabel();
+  }
+
+  function ensureControlPanel(){
+    // Allow panel in top frame and in any frame that appears to be on/inside the Incidents surface.
+    if(!IS_TOP_FRAME && !isIncidentContext()) return null;
+    if(!document.body) return null;
+
+    const renderPanel = (panel)=>{
+      const wasVisible = (panel.getAttribute('data-hidden') === '0') || (panel.style && panel.style.display === 'flex');
+      panel.id = PANEL_ID;
+      // Preserve existing hidden/visible state so outside-click logic still works after re-render
+      panel.setAttribute('data-hidden', wasVisible ? '0' : '1');
+      panel.innerHTML = `
+        <div class="sentinel-panel-header">
+          <div>
+            <div>Sentinel Helper Monkey</div>
+            <div class="sentinel-panel-meta">Monkey fix Microsoft mistakes</div>
+          </div>
+          <button type="button" class="sentinel-panel-close" aria-label="Hide Sentinel helper">&times;</button>
+        </div>
+        <div class="sentinel-panel-body">
+          <button type="button" id="${PANEL_RUN_BTN_ID}" class="sentinel-panel-action">Manually Generate Copy KQL Button</button>
+          <div class="sentinel-refresh-block">
+            <div id="${PANEL_STATUS_ID}" class="sentinel-refresh-status">Incident auto-refresh not active</div>
+            <div id="${PANEL_TIMER_ID}" class="sentinel-refresh-timer">Last incident refresh: not yet</div>
+          </div>
+        </div>
+      `;
+      const closeBtn = panel.querySelector('.sentinel-panel-close');
+      if(closeBtn){ closeBtn.addEventListener('click', hideControlPanel); }
+
+      const runBtn = panel.querySelector('#'+PANEL_RUN_BTN_ID);
+      if(runBtn){
+        runBtn.addEventListener('click', ()=>{
+          try{
+            attachSuppressedUntil = 0;
+            scheduleScan(0);
+          }catch(e){}
+        });
+      }
+      // Sync display to hidden state after render to keep outside-click toggling intact
+      try{
+        if(wasVisible){
+          panel.style.display = 'flex';
+          panel.setAttribute('data-hidden','0');
+        } else {
+          panel.style.display = 'none';
+          panel.setAttribute('data-hidden','1');
+        }
+      }catch(e){}
+    };
+
+    if(controlPanelEl && document.body.contains(controlPanelEl)){
+      // If essential controls disappeared, rebuild the panel markup.
+      const hasRun = !!controlPanelEl.querySelector('#'+PANEL_RUN_BTN_ID);
+      const hasClose = !!controlPanelEl.querySelector('.sentinel-panel-close');
+      if(!hasRun || !hasClose){
+        renderPanel(controlPanelEl);
+      }
+      updateIncidentTimerLabel();
+      return controlPanelEl;
+    }
+
+    const panel = document.createElement('div');
+    panel.setAttribute('data-hidden','1');
+    renderPanel(panel);
+    document.body.appendChild(panel);
+    controlPanelEl = panel;
+    updateIncidentTimerLabel();
+    return panel;
+  }
+
+  function isPanelHidden(){
+    if(!controlPanelEl) return true;
+    return controlPanelEl.getAttribute('data-hidden') === '1' || controlPanelEl.style.display === 'none';
+  }
+
+  function showControlPanel(){
+    const panel = ensureControlPanel();
+    if(!panel) return;
+    panel.style.display = 'flex';
+    panel.setAttribute('data-hidden','0');
+    if(isIncidentPage(location.href)) startIncidentAutoRefresh();
+    updateIncidentTimerLabel();
+  }
+
+  function hideControlPanel(){
+    if(!controlPanelEl) return;
+    controlPanelEl.style.display = 'none';
+    controlPanelEl.setAttribute('data-hidden','1');
+  }
+
+  function toggleControlPanel(){
+    if(isPanelHidden()) showControlPanel();
+    else hideControlPanel();
+  }
+
+  function handleOutsideClick(ev){
+    const panelVisible = !isPanelHidden();
+    if(!panelVisible){
+      // We might be in a different frame; ask others to hide.
+      broadcastHidePanel();
+      return;
+    }
+    const panel = ensureControlPanel();
+    if(!panel) return;
+    const path = ev.composedPath ? ev.composedPath() : [ev.target];
+    if(path.some(node => node === panel)) return;
+    if(panel.contains(ev.target)) return;
+    hideControlPanel();
+    broadcastHidePanel();
+  }
+
+  function broadcastHidePanel(){
+    // Ask other frames to hide their panels as well (in case the visible panel
+    // lives in a sibling/child frame).
+    try{
+      if(IS_TOP_FRAME){
+        const frames = Array.from(window.frames || []);
+        frames.forEach(f=>{ try{ f.postMessage({ type: 'sentinel:hide-panel' }, '*'); }catch(e){} });
+      } else if(window.top && window.top !== window){
+        window.top.postMessage({ type: 'sentinel:hide-panel' }, '*');
+      }
+    }catch(e){}
+  }
+
+  function handleIncidentPageState(){
+    const onIncident = isIncidentContext();
+    if(onIncident){
+      const sameContext = location.href === lastSeenIncidentUrl;
+      if(!sameContext){
+        lastIncidentRefreshAt = null; // reset countdown when navigating between incident contexts
+      }
+      lastSeenIncidentUrl = location.href;
+      attachSuppressedUntil = 0; // allow immediate scans on new context
+      if(!incidentRefreshTimeoutId || !sameContext){
+        startIncidentAutoRefresh(); // only start/restart when needed, not on every toggle
+      } else {
+        updateIncidentTimerLabel();
+      }
+      scheduleScan(0);
+    } else {
+      lastSeenIncidentUrl = null;
+      stopIncidentAutoRefresh();
+    }
+    updateIncidentTimerLabel();
+  }
+
+  function watchUrlChanges(){
+    if(!IS_TOP_FRAME) return;
+    if(urlWatchIntervalId) return;
+    let lastHref = location.href;
+    urlWatchIntervalId = setInterval(()=>{
+      if(location.href !== lastHref){
+        lastHref = location.href;
+        handleIncidentPageState();
+      }
+    }, 900);
+  }
+
+  function hookHistoryNavigation(){
+    if(!IS_TOP_FRAME || historyHooked) return;
+    historyHooked = true;
+    const notify = ()=>{ try{ handleIncidentPageState(); }catch(e){} };
+    try{
+      const origPush = history.pushState;
+      history.pushState = function(){
+        const r = origPush && origPush.apply(this, arguments);
+        notify();
+        return r;
+      };
+    }catch(e){/* ignore */ }
+    try{
+      const origReplace = history.replaceState;
+      history.replaceState = function(){
+        const r = origReplace && origReplace.apply(this, arguments);
+        notify();
+        return r;
+      };
+    }catch(e){/* ignore */ }
+    window.addEventListener('popstate', notify, true);
+    window.addEventListener('hashchange', notify, true);
   }
 
   function isVisible(el){
@@ -495,6 +1005,41 @@
   function start(){
     injectStyles();
     scheduleScan(600);
+    const ownerFrame = IS_TOP_FRAME || isIncidentContext();
+    if(ownerFrame){
+      handleIncidentPageState();
+    }
+    if(IS_TOP_FRAME){
+      hookHistoryNavigation();
+      watchUrlChanges();
+    }
+    document.addEventListener('mousedown', handleOutsideClick, true);
+    document.addEventListener('pointerdown', handleOutsideClick, true);
+    document.addEventListener('click', handleOutsideClick, true);
+    document.addEventListener('touchstart', handleOutsideClick, true);
+    document.addEventListener('pointerup', handleOutsideClick, true);
+    document.addEventListener('keyup', (ev)=>{ if(ev.key === 'Escape') hideControlPanel(); }, true);
+    window.addEventListener('blur', hideControlPanel, true);
+
+    // Cross-frame outside-click relay: if the panel lives in the top frame but the user clicks inside a child frame,
+    // forward a signal to the top to hide the panel.
+    const relayOutsideClick = ()=>{
+      try{
+        if(IS_TOP_FRAME) return;
+        if(window.top && window.top !== window && window.top.dispatchEvent){
+          window.top.dispatchEvent(new CustomEvent('sentinel:outside-click-global'));
+        }
+      }catch(e){}
+    };
+    if(!IS_TOP_FRAME){
+      document.addEventListener('mousedown', relayOutsideClick, true);
+      document.addEventListener('pointerdown', relayOutsideClick, true);
+      document.addEventListener('click', relayOutsideClick, true);
+      document.addEventListener('touchstart', relayOutsideClick, true);
+    }
+    if(IS_TOP_FRAME){
+      window.addEventListener('sentinel:outside-click-global', ()=>{ try{ hideControlPanel(); }catch(e){} }, true);
+    }
     // Watch for dynamic UI changes in the portal (single-page app)
     const mo = new MutationObserver((mutations)=>{
       // If we're suppressed due to repeated failures, wake up on meaningful DOM changes

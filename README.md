@@ -1,10 +1,13 @@
-# Sentinel Helper Extension
+﻿# Sentinel Helper Extension
 
 Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft Sentinel. The project is actively being extended with additional Sentinel-focused helpers — this README documents the current functionality, installation/usage, troubleshooting, and planned features.
 
 **Current Functionality**
-- **Copy KQL**: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
+- ** Copy KQL **: A small copy KQL button appears when you hover over a rule query box on either the Analytics or Content Hub pages. Supports Sentinel in either portal.azure.com or security.microsoft.com as well as Content Hub in either portal.
 
+- ** Manual Force Copy KQL Button ** - Sometimes the copy KQL button doesn't load automatically, this forces the button to be generated.
+
+- ** Automatically Refresh Incidents **: Defaulted to 30 seconds Incidents in either security.microsoft.com and mto.security.microsoft.com will automatically refresh. The time since last refresh is can be seen within the menu panel.
 
 **Installation (Chrome / Edge - developer mode)**
 1. Open `edge://extensions` or `chrome://extensions`.
@@ -12,9 +15,6 @@ Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft S
 3. Click "Load unpacked" and select the extension folder: `d:/Work/Code & Scripts/Sentinel Extension`.
 4. Navigate to `https://portal.azure.com` → Microsoft Sentinel → Analytics.
 5. Open an analytic rule and hover the query box; the "Copy KQL" button should appear in the top-right of the query container.
-
-**Manual inject**
-- Click the extension action button in the toolbar to run a one-shot scan in all frames. This forces the detector to attach buttons when the portal's dynamic UI prevents automatic attachment.
 
 **Troubleshooting & Tips**
 - If you don't see the button: reload the extension page (`edge://extensions`/`chrome://extensions` → Reload) and then reload the portal page (`F5`).
@@ -37,4 +37,4 @@ Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft S
 2. Reload the portal page (`F5`) so iframe content reloads and the content script can run inside it.
 
 ---
-_Last updated: November 24, 2025_
+_Last updated: December 3, 2025_

@@ -12,7 +12,8 @@
   "host_permissions": [
     "https://portal.azure.com/*",
     "https://*.reactblade.portal.azure.net/*",
-    "https://security.microsoft.com/*"
+    "https://security.microsoft.com/*",
+    "https://mto.security.microsoft.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -35,7 +36,8 @@
       "matches": [
         "https://portal.azure.com/*",
         "https://*.reactblade.portal.azure.net/*",
-        "https://security.microsoft.com/*"
+        "https://security.microsoft.com/*",
+        "https://mto.security.microsoft.com/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_idle",

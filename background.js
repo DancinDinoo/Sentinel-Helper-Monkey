@@ -1,29 +1,39 @@
-// Background service worker: injects a one-shot scanner into all frames when the extension icon is clicked
+// Background service worker: opens the helper panel when the extension icon is clicked
+
+function isSupportedTabUrl(url){
+  if(!url) return false;
+  return /portal\.azure\.com/.test(url) ||
+         /\.reactblade\.portal\.azure\.net/.test(url) ||
+         /security\.microsoft\.com/.test(url) ||
+         /mto\.security\.microsoft\.com/.test(url);
+}
 
 chrome.action.onClicked.addListener((tab) => {
   if(!tab || !tab.id) return;
-  // First, cleanup any legacy/static buttons that older builds may have injected
-  const cleanupFunc = () => {
-    try{
-      // remove known class-based controls
-      document.querySelectorAll('.sentinel-kql-copy-btn').forEach(n=>n.remove());
-      // remove any buttons with the legacy label
-      Array.from(document.querySelectorAll('button')).forEach(b=>{ try{ if(b.textContent && b.textContent.includes('Copy KQL')) b.remove(); }catch(e){} });
-      // remove legacy attached flags on <pre> elements
-      document.querySelectorAll('pre').forEach(p=>{ try{ if(p.__kqlCopyAttached) delete p.__kqlCopyAttached; }catch(e){} });
-      // also clear any leftover data attributes used by prior runs
-      document.querySelectorAll('[data-sentinel-owner-id]').forEach(n=>{ try{ n.removeAttribute && n.removeAttribute('data-sentinel-owner-id'); n.removeAttribute && n.removeAttribute('__sentinel_kql_button'); }catch(e){} });
-    }catch(e){}
-  };
-
-  chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: cleanupFunc }, ()=>{
-    // Inject the content script file into all frames (if not already present), then call the exposed scan helper
-    chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content-script.js'] }, ()=>{
-      chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
-        try{ if(window.__sentinelKqlScan){ window.__sentinelKqlScan(); return {scanned:true, frameUrl: location.href}; } return {scanned:false, frameUrl: location.href}; }
-        catch(err){ return {error: String(err), frameUrl: location.href}; }
-      } }, (results)=>{ console.log('Sentinel KQL helper injected/scan results:', results); });
+  const dispatchToggleEvent = () => {
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: () => { try{ window.dispatchEvent(new CustomEvent('sentinel:toggle-panel-local')); }catch(e){} }
     });
+  };
+  const forceShowPanelAllFrames = () => {
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: () => { try{ window.__sentinelShowPanel && window.__sentinelShowPanel(); }catch(e){} }
+    });
+  };
+  // Primary path: broadcast a toggle event to all frames so whichever frame owns the Incidents surface can show the panel.
+  dispatchToggleEvent();
+  // Also ask each frame to force-show the panel in case toggling is swallowed by a hidden top frame.
+  forceShowPanelAllFrames();
+  // Fallback: if the content script wasn't loaded, inject it and retry.
+  chrome.tabs.sendMessage(tab.id, { type: 'sentinel:toggle-panel' }, (resp)=>{
+    if(chrome.runtime.lastError && isSupportedTabUrl(tab.url)){
+      chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ['content-script.js'] }, ()=>{
+        dispatchToggleEvent();
+        forceShowPanelAllFrames();
+      });
+    }
   });
 });
 
@@ -37,7 +47,7 @@ function shouldInject(tabId){
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if(changeInfo.status === 'complete' && tab && tab.url && (/portal.azure.com/.test(tab.url) || /security.microsoft.com/.test(tab.url))){
+    if(changeInfo.status === 'complete' && tab && tab.url && isSupportedTabUrl(tab.url)){
     if(!shouldInject(tabId)) return;
     // Multiple injection attempts across a short time window to catch late-rendered frames
     const attempts = [0, 700, 1600, 3500, 7000];
