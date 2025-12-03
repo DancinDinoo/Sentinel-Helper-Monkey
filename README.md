@@ -12,9 +12,8 @@ Sentinel Helper is a Chromium extension that provides QOL changes to Microsoft S
 **Installation (Chrome / Edge - developer mode)**
 1. Open `edge://extensions` or `chrome://extensions`.
 2. Enable "Developer mode".
-3. Click "Load unpacked" and select the extension folder: `d:/Work/Code & Scripts/Sentinel Extension`.
-4. Navigate to `https://portal.azure.com` → Microsoft Sentinel → Analytics.
-5. Open an analytic rule and hover the query box; the "Copy KQL" button should appear in the top-right of the query container.
+3. Click "Load unpacked" and select the extension folder.
+4. Enjoy!
 
 **Troubleshooting & Tips**
 - If you don't see the button: reload the extension page (`edge://extensions`/`chrome://extensions` → Reload) and then reload the portal page (`F5`).
